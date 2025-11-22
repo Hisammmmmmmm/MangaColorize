@@ -7,6 +7,8 @@ import { Button } from './components/Button';
 import { ImageComparator } from './components/ImageComparator';
 import { BatchImageCard } from './components/BatchImageCard';
 
+declare const JSZip: any;
+
 const STYLE_OPTIONS: { id: ColorizationStyle; label: string; description: string; gradient: string }[] = [
   { id: 'vibrant', label: 'Vibrant Anime', description: 'Classic saturated look', gradient: 'from-pink-500 via-purple-500 to-blue-500' },
   { id: 'pastel', label: 'Soft Pastel', description: 'Dreamy watercolor vibes', gradient: 'from-pink-300 via-purple-200 to-blue-200' },
@@ -22,6 +24,7 @@ const App: React.FC = () => {
   const [selectedStyle, setSelectedStyle] = useState<ColorizationStyle>('vibrant');
   const [mangaTitle, setMangaTitle] = useState<string>('');
   const [customPrompt, setCustomPrompt] = useState<string>('');
+  const [isConfigExpanded, setIsConfigExpanded] = useState<boolean>(true);
 
   // Single Mode State
   const [file, setFile] = useState<File | null>(null);
@@ -31,6 +34,8 @@ const App: React.FC = () => {
 
   // Batch Mode State
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
+  const [isZipping, setIsZipping] = useState<boolean>(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const stopBatchRef = useRef<boolean>(false);
   
   // Track object URLs for cleanup to avoid dependency cycles in useEffect
@@ -81,6 +86,7 @@ const App: React.FC = () => {
       setBatchItems(items);
     }
     setStatus(AppStatus.IDLE);
+    setIsConfigExpanded(true); // Auto expand config on new file
   };
 
   // --- Core Processing Logic ---
@@ -146,6 +152,7 @@ const App: React.FC = () => {
     
     setStatus(AppStatus.PROCESSING);
     stopBatchRef.current = false;
+    setIsConfigExpanded(false); // Auto collapse config on start
 
     // Create a copy to iterate over
     const items = [...batchItems];
@@ -177,20 +184,38 @@ const App: React.FC = () => {
     }
   };
 
-  const handleDownloadAll = () => {
+  const handleDownloadAll = async () => {
     const successfulItems = batchItems.filter(i => i.status === 'SUCCESS' && i.resultBase64);
-    successfulItems.forEach((item, index) => {
-      setTimeout(() => {
+    if (successfulItems.length === 0) return;
+
+    setIsZipping(true);
+
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("colorized-manga");
+
+      successfulItems.forEach((item) => {
         if (item.resultBase64) {
-          const link = document.createElement('a');
-          link.href = item.resultBase64;
-          link.download = `colorized-${item.file.name}`;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+           const base64Data = item.resultBase64.split(',')[1];
+           // Rename extension to png as output is png
+           const fileName = item.file.name.replace(/\.[^/.]+$/, "") + ".png";
+           folder.file(fileName, base64Data, { base64: true });
         }
-      }, index * 500); // Stagger downloads to prevent browser blocking
-    });
+      });
+
+      const content = await zip.generateAsync({ type: "blob" });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(content);
+      link.download = "manga_colorized_batch.zip";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+    } catch (error) {
+      console.error("Error creating zip:", error);
+    } finally {
+      setIsZipping(false);
+    }
   };
 
   const reset = () => {
@@ -202,75 +227,113 @@ const App: React.FC = () => {
     setBatchItems([]);
     setMangaTitle('');
     setCustomPrompt('');
+    setIsZipping(false);
+    setIsConfigExpanded(true);
   };
 
   // --- RENDER HELPERS ---
   const renderConfiguration = () => (
-    <div className="w-full max-w-3xl space-y-8 animate-fade-in-up">
-      {/* Manga Title Input */}
-      <div>
-        <p className="text-center text-gray-400 mb-3 text-sm uppercase tracking-widest font-bold">Manga Title (Optional)</p>
-        <div className="relative max-w-md mx-auto">
-          <input 
-            type="text"
-            value={mangaTitle}
-            onChange={(e) => setMangaTitle(e.target.value)}
-            placeholder="e.g. One Piece, Naruto, Berserk..."
-            className="w-full px-5 py-3 bg-gray-800/50 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-accent-blue focus:ring-1 focus:ring-accent-blue transition-all text-center"
-          />
-        </div>
-        <p className="text-center text-gray-500 text-xs mt-2">Helps the AI choose correct character and location colors.</p>
-      </div>
-
-      {/* Style Selector */}
-      <div>
-        <p className="text-center text-gray-400 mb-4 text-sm uppercase tracking-widest font-bold">Select Art Style</p>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
-          {STYLE_OPTIONS.map((style) => (
-            <button
-              key={style.id}
-              onClick={() => setSelectedStyle(style.id)}
-              className={`
-                relative p-4 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-2 text-center group
-                ${selectedStyle === style.id
-                  ? 'border-accent-pink bg-accent-pink/10 shadow-[0_0_20px_rgba(255,0,122,0.2)] scale-105 z-10' 
-                  : 'border-gray-700 bg-gray-800/40 hover:bg-gray-800 hover:border-gray-500'
-                }
-              `}
-            >
-              <div className={`w-full h-3 rounded-full mb-1 bg-gradient-to-r ${style.gradient} shadow-sm`}></div>
-              <div className="flex flex-col">
-                <span className={`font-bold text-sm ${selectedStyle === style.id ? 'text-white' : 'text-gray-300'}`}>
-                    {style.label}
-                </span>
-                <span className="text-[10px] text-gray-500 leading-tight mt-1">
-                    {style.description}
-                </span>
-              </div>
-              {selectedStyle === style.id && (
-                <div className="absolute -top-2 -right-2 bg-accent-pink text-white rounded-full p-1 shadow-md">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+    <div className="w-full max-w-3xl mx-auto animate-fade-in-up bg-gray-800/30 backdrop-blur-sm border border-gray-700 rounded-2xl overflow-hidden shadow-lg transition-all duration-300 mb-8">
+        <button 
+            onClick={() => setIsConfigExpanded(!isConfigExpanded)}
+            className="w-full px-6 py-4 flex justify-between items-center bg-gray-800/50 hover:bg-gray-700/50 transition-colors cursor-pointer group select-none"
+        >
+            <div className="flex items-center gap-4">
+                <div className={`p-2 rounded-lg transition-colors ${isConfigExpanded ? 'bg-accent-pink text-white' : 'bg-gray-700 text-gray-400'}`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                     </svg>
                 </div>
-              )}
-            </button>
-          ))}
-        </div>
-      </div>
+                <div className="text-left">
+                    <h3 className="font-bold text-white text-lg">Colorization Options</h3>
+                    <p className="text-sm text-gray-400">
+                        {!isConfigExpanded 
+                            ? `${STYLE_OPTIONS.find(s => s.id === selectedStyle)?.label} • ${mangaTitle ? mangaTitle : 'No Title'}`
+                            : 'Configure style and context'}
+                    </p>
+                </div>
+            </div>
+            <div className={`p-2 rounded-full bg-gray-700/50 group-hover:bg-gray-600 transition-colors`}>
+                 {isConfigExpanded ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                    </svg>
+                 ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                 )}
+            </div>
+        </button>
 
-      {/* Custom Prompt Input */}
-      {selectedStyle === 'custom' && (
-        <div className="animate-fade-in-up">
-          <p className="text-center text-gray-400 mb-3 text-sm uppercase tracking-widest font-bold">Custom Instructions</p>
-          <textarea
-            value={customPrompt}
-            onChange={(e) => setCustomPrompt(e.target.value)}
-            placeholder="e.g. Colorize this manga panel of One Punch Man using deep reds and gold accents, keep shadows heavy..."
-            className="w-full h-24 px-4 py-3 bg-gray-800/50 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-accent-pink focus:ring-1 focus:ring-accent-pink transition-all resize-none"
-          />
+        <div className={`transition-all duration-500 ease-in-out overflow-hidden ${isConfigExpanded ? 'max-h-[1000px] opacity-100' : 'max-h-0 opacity-0'}`}>
+            <div className="p-6 space-y-8 border-t border-gray-700/50">
+                {/* Manga Title Input */}
+                <div>
+                    <p className="text-center text-gray-400 mb-3 text-sm uppercase tracking-widest font-bold">Manga Title (Optional)</p>
+                    <div className="relative max-w-md mx-auto">
+                    <input 
+                        type="text"
+                        value={mangaTitle}
+                        onChange={(e) => setMangaTitle(e.target.value)}
+                        placeholder="e.g. One Piece, Naruto, Berserk..."
+                        className="w-full px-5 py-3 bg-gray-800/50 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-accent-blue focus:ring-1 focus:ring-accent-blue transition-all text-center"
+                    />
+                    </div>
+                    <p className="text-center text-gray-500 text-xs mt-2">Helps the AI choose correct character and location colors.</p>
+                </div>
+
+                {/* Style Selector */}
+                <div>
+                    <p className="text-center text-gray-400 mb-4 text-sm uppercase tracking-widest font-bold">Select Art Style</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
+                    {STYLE_OPTIONS.map((style) => (
+                        <button
+                        key={style.id}
+                        onClick={() => setSelectedStyle(style.id)}
+                        className={`
+                            relative p-4 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-2 text-center group
+                            ${selectedStyle === style.id
+                            ? 'border-accent-pink bg-accent-pink/10 shadow-[0_0_20px_rgba(255,0,122,0.2)] scale-105 z-10' 
+                            : 'border-gray-700 bg-gray-800/40 hover:bg-gray-800 hover:border-gray-500'
+                            }
+                        `}
+                        >
+                        <div className={`w-full h-3 rounded-full mb-1 bg-gradient-to-r ${style.gradient} shadow-sm`}></div>
+                        <div className="flex flex-col">
+                            <span className={`font-bold text-sm ${selectedStyle === style.id ? 'text-white' : 'text-gray-300'}`}>
+                                {style.label}
+                            </span>
+                            <span className="text-[10px] text-gray-500 leading-tight mt-1">
+                                {style.description}
+                            </span>
+                        </div>
+                        {selectedStyle === style.id && (
+                            <div className="absolute -top-2 -right-2 bg-accent-pink text-white rounded-full p-1 shadow-md">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                            </div>
+                        )}
+                        </button>
+                    ))}
+                    </div>
+                </div>
+
+                {/* Custom Prompt Input */}
+                {selectedStyle === 'custom' && (
+                    <div className="animate-fade-in-up">
+                    <p className="text-center text-gray-400 mb-3 text-sm uppercase tracking-widest font-bold">Custom Instructions</p>
+                    <textarea
+                        value={customPrompt}
+                        onChange={(e) => setCustomPrompt(e.target.value)}
+                        placeholder="e.g. Colorize this manga panel of One Punch Man using deep reds and gold accents, keep shadows heavy..."
+                        className="w-full h-24 px-4 py-3 bg-gray-800/50 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-accent-pink focus:ring-1 focus:ring-accent-pink transition-all resize-none"
+                    />
+                    </div>
+                )}
+            </div>
         </div>
-      )}
     </div>
   );
 
@@ -366,16 +429,39 @@ const App: React.FC = () => {
           {isBatchMode && (
             <div className="space-y-8 animate-fade-in-up">
               <div className="flex flex-col md:flex-row justify-between items-center border-b border-gray-700 pb-6 mb-6 gap-4">
-                <div>
+                <div className="flex items-center gap-6">
                   <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                     Batch Processing 
                     <span className="bg-accent-blue text-black text-xs px-2 py-1 rounded-full font-bold">{batchItems.length} files</span>
                   </h2>
+
+                  {/* View Toggle */}
+                  <div className="flex items-center gap-1 bg-gray-800 p-1 rounded-lg border border-gray-700">
+                    <button 
+                        onClick={() => setViewMode('grid')}
+                        className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                        title="Grid View"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM11 13a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                        </svg>
+                    </button>
+                    <button 
+                        onClick={() => setViewMode('list')}
+                        className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-gray-600 text-white shadow-sm' : 'text-gray-400 hover:text-white'}`}
+                        title="List View"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                        </svg>
+                    </button>
+                  </div>
                 </div>
+
                 <div className="flex flex-wrap gap-2 justify-end">
                   {batchItems.some(i => i.status === 'SUCCESS') && (
-                     <Button variant="secondary" onClick={handleDownloadAll} className="text-sm px-4 py-2 bg-gray-800 border-gray-600">
-                        Download All
+                     <Button variant="secondary" onClick={handleDownloadAll} disabled={isZipping} className="text-sm px-4 py-2 bg-gray-800 border-gray-600">
+                        {isZipping ? 'Zipping...' : 'Download All (ZIP)'}
                      </Button>
                   )}
                   
@@ -416,15 +502,13 @@ const App: React.FC = () => {
               )}
 
               {status !== AppStatus.PROCESSING && batchItems.some(i => i.status !== 'SUCCESS') && (
-                  <div className="bg-gray-900/50 p-6 rounded-xl mb-8">
-                      {renderConfiguration()}
-                  </div>
+                  renderConfiguration()
               )}
 
-              {/* Batch Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {/* Batch Items Container */}
+              <div className={viewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"}>
                 {batchItems.map((item) => (
-                  <BatchImageCard key={item.id} item={item} onRetry={handleRetryItem} />
+                  <BatchImageCard key={item.id} item={item} onRetry={handleRetryItem} viewMode={viewMode} />
                 ))}
               </div>
             </div>

@@ -6,7 +6,7 @@ import { ColorizationStyle } from "../types";
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const STYLE_PROMPTS: Record<string, string> = {
-  vibrant: "Style: Modern TV Anime Adaptation. High saturation, vivid colors, cel-shading. Fill every pixel with rich, deep colors. No pale or washed-out areas. Make it look like a high-budget anime screenshot.",
+  vibrant: "Expertly colorized manga page, full color, anime style cel shading, vibrant and distinct colors for every element, maintain original line art and composition exactly, no grayscale remaining, no black and white parts, high resolution, 4k.",
   pastel: "Style: Shoujo Watercolor Illustration. Soft, dreamy aesthetic with full color washes. Use pinks, purples, and soft blues to fill the entire canvas. Ensure no paper white remains exposed.",
   gritty: "Style: Seinen/Dark Fantasy. Realistic textures, heavy atmosphere, dramatic lighting. Deep earth tones and shadows. Eliminate all pure white space outside of text bubbles.",
   retro: "Style: Vintage 90s Cel-Animation. Technicolor palette, flat colors, hard shadows. Classic anime look with full color density. Paint over all sketch lines.",
