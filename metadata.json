@@ -1,0 +1,5 @@
+{
+  "name": "MangaColorize AI",
+  "description": "A specialized AI application that instantly colorizes black and white manga pages while intelligently preserving text bubbles and dialogue clarity using Gemini Flash Image.",
+  "requestFramePermissions": []
+}
