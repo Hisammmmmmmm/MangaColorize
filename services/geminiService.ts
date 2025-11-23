@@ -66,17 +66,35 @@ export const colorizeMangaPage = async (
 
     if (isRefinement) {
         if (refinementInstruction) {
-             // Custom Fix Mode
-             textPrompt = `EDITING REQUEST.
-             The provided image is a colored manga page.
-             
-             USER INSTRUCTION: "${refinementInstruction}"
-             
-             YOUR TASK:
-             1. Apply the user's specific change to the image.
-             2. PRESERVE the rest of the image colors and style. Do not radically change parts the user did not ask about.
-             3. Ensure the result is still fully colored with no black and white artifacts.
-             4. ${contextInstruction}`;
+             // Check if the instruction implies a red mask was drawn
+             const hasRedMask = refinementInstruction.startsWith('[RED_MASK]');
+             const cleanedInstruction = refinementInstruction.replace('[RED_MASK]', '').trim();
+
+             if (hasRedMask) {
+                 // Custom Fix Mode with Visual Annotation
+                 textPrompt = `VISUAL EDITING REQUEST.
+                 The provided image contains a RED OUTLINE/DRAWING added by the user to highlight a specific area.
+                 
+                 USER INSTRUCTION: "On the area surrounded/marked in RED: ${cleanedInstruction}"
+                 
+                 YOUR TASK:
+                 1. Locate the red annotation lines on the image.
+                 2. Apply the user's instruction ONLY to the content inside or near that red marking.
+                 3. CRITICAL: COMPLETELY REMOVE THE RED ANNOTATION LINES from the final output. The final image should look like a finished animation frame with no red marker lines.
+                 4. Preserve the rest of the image exactly as is.`;
+             } else {
+                 // Custom Fix Mode (Text only)
+                 textPrompt = `EDITING REQUEST.
+                 The provided image is a colored manga page.
+                 
+                 USER INSTRUCTION: "${cleanedInstruction}"
+                 
+                 YOUR TASK:
+                 1. Apply the user's specific change to the image.
+                 2. PRESERVE the rest of the image colors and style. Do not radically change parts the user did not ask about.
+                 3. Ensure the result is still fully colored with no black and white artifacts.
+                 4. ${contextInstruction}`;
+             }
         } else {
             // Auto-Fix Mode (Fix B&W)
             textPrompt = `FIX INCOMPLETE COLORIZATION. 

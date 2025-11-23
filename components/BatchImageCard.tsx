@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { BatchItem } from '../types';
 
 interface BatchImageCardProps {
   item: BatchItem;
   onRetry: (id: string) => void;
   onImprove: (id: string) => void;
-  onCustomFix: (id: string, prompt: string) => void;
+  onCustomFix: (id: string, prompt: string, modifiedImageBase64?: string) => void;
   viewMode: 'grid' | 'list';
 }
 
@@ -14,6 +14,64 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, o
   const [isExpanded, setIsExpanded] = useState(false);
   const [showCustomFixInput, setShowCustomFixInput] = useState(false);
   const [customFixText, setCustomFixText] = useState('');
+  const [inputPosition, setInputPosition] = useState<'bottom' | 'top'>('bottom');
+  
+  // Drawing state
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const isDrawingRef = useRef(false);
+
+  // Setup canvas when drawing mode is toggled or image loads
+  useEffect(() => {
+    if (showCustomFixInput && isDrawingMode && canvasRef.current && imageRef.current) {
+        const canvas = canvasRef.current;
+        const img = imageRef.current;
+        
+        // Match canvas resolution to image display size for coordinate accuracy
+        canvas.width = img.width;
+        canvas.height = img.height;
+        
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 4;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+  }, [showCustomFixInput, isDrawingMode, isExpanded]);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+      if (!isDrawingMode || !canvasRef.current) return;
+      isDrawingRef.current = true;
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+          ctx.beginPath();
+          ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+      }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+      if (!isDrawingMode || !isDrawingRef.current || !canvasRef.current) return;
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+          ctx.lineTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+          ctx.stroke();
+      }
+  };
+
+  const handleMouseUp = () => {
+      isDrawingRef.current = false;
+  };
+
+  const handleClearCanvas = () => {
+      if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+  };
 
   const handleCompareStart = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -29,9 +87,40 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, o
 
   const handleCustomFixSubmit = () => {
     if (customFixText.trim()) {
-        onCustomFix(item.id, customFixText);
+        let finalPrompt = customFixText;
+        let modifiedBase64: string | undefined = undefined;
+
+        // If user drew on the canvas, merge it
+        if (isDrawingMode && canvasRef.current && imageRef.current) {
+            // Create a temporary canvas to merge the underlying image and the drawing
+            const tempCanvas = document.createElement('canvas');
+            const img = imageRef.current;
+            
+            // Use natural size for best quality
+            tempCanvas.width = img.naturalWidth;
+            tempCanvas.height = img.naturalHeight;
+            const ctx = tempCanvas.getContext('2d');
+            
+            if (ctx) {
+                // Draw original image (which is the generated result if successful)
+                ctx.drawImage(img, 0, 0);
+                
+                // Draw the annotation overlay, scaled up
+                ctx.drawImage(canvasRef.current, 0, 0, tempCanvas.width, tempCanvas.height);
+                
+                // Get Base64
+                const mergedData = tempCanvas.toDataURL('image/png');
+                modifiedBase64 = mergedData.split(',')[1];
+                
+                // Add tag to prompt so service knows to look for red mask
+                finalPrompt = `[RED_MASK] ${customFixText}`;
+            }
+        }
+
+        onCustomFix(item.id, finalPrompt, modifiedBase64);
         setShowCustomFixInput(false);
         setCustomFixText('');
+        setIsDrawingMode(false);
     }
   };
 
@@ -39,18 +128,52 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, o
     ? item.resultBase64 
     : item.previewUrl;
 
+  const renderCompareButton = () => {
+    if (item.status !== 'SUCCESS') return null;
+    return (
+        <button 
+            onMouseDown={handleCompareStart}
+            onMouseUp={handleCompareEnd}
+            onMouseLeave={handleCompareEnd}
+            onTouchStart={handleCompareStart}
+            onTouchEnd={handleCompareEnd}
+            className={`p-1.5 rounded-full transition-colors pointer-events-auto shadow-lg ${showOriginal ? 'bg-accent-blue text-black' : 'bg-black/50 text-gray-300 hover:text-white hover:bg-black/70'}`}
+            title="Hold to compare with original"
+        >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+        </button>
+    );
+  };
+
   const renderImageArea = () => (
-    <div className="relative aspect-[2/3] bg-gray-900 w-full h-full">
+    <div className="relative aspect-[2/3] bg-gray-900 w-full h-full select-none group/image">
         <img 
+            ref={imageRef}
             src={displaySrc} 
             alt={showOriginal ? "Original" : "Result"} 
             className={`w-full h-full object-cover transition-opacity duration-200 ${item.status === 'PROCESSING' ? 'opacity-50' : ''}`} 
+            onDragStart={(e) => e.preventDefault()}
         />
+        
+        {/* Canvas Overlay for Drawing */}
+        {showCustomFixInput && isDrawingMode && (
+            <canvas 
+                ref={canvasRef}
+                className="absolute inset-0 w-full h-full cursor-crosshair z-30 touch-none"
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+            />
+        )}
         
         {/* Status Overlay */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
             {item.status === 'PROCESSING' && (
-                <div className="bg-black/50 p-3 rounded-full backdrop-blur-sm">
+                <div className="bg-black/50 p-3 rounded-full backdrop-blur-sm z-40">
                     <svg className="animate-spin h-8 w-8 text-accent-blue" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -77,56 +200,92 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, o
                 </div>
             )}
         </div>
+        
+        {/* Compare Button Overlay - integrated for both views */}
+        {!showCustomFixInput && !isDrawingMode && item.status === 'SUCCESS' && (
+             <div className="absolute bottom-2 right-2 z-10 pointer-events-auto">
+                 {renderCompareButton()}
+             </div>
+        )}
 
         {/* Custom Fix Input Overlay (Grid Mode) */}
+        {/* Fix: z-40 allows controls to be above canvas(z-30), but pointer-events-none on container lets clicks pass through to canvas for drawing */}
         {showCustomFixInput && viewMode === 'grid' && (
-            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-4 z-20 animate-fade-in-up">
-                <p className="text-white text-sm font-bold mb-2">What to fix?</p>
-                <textarea 
-                    value={customFixText}
-                    onChange={(e) => setCustomFixText(e.target.value)}
-                    placeholder="e.g. Make hair red..."
-                    className="w-full h-20 bg-gray-800 text-white text-xs p-2 rounded border border-gray-600 mb-2 focus:border-accent-blue focus:outline-none resize-none"
-                    autoFocus
-                />
-                <div className="flex gap-2 w-full">
-                    <button 
-                        onClick={() => setShowCustomFixInput(false)}
-                        className="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-xs py-1 rounded"
-                    >
-                        Cancel
-                    </button>
-                    <button 
-                        onClick={handleCustomFixSubmit}
-                        className="flex-1 bg-accent-blue hover:bg-blue-400 text-black font-bold text-xs py-1 rounded"
-                    >
-                        Fix
-                    </button>
+            <div className={`absolute inset-0 flex flex-col ${inputPosition === 'bottom' ? 'justify-end bg-gradient-to-t' : 'justify-start bg-gradient-to-b'} from-black via-black/80 to-transparent p-2 z-40 pointer-events-none transition-all`}>
+                 <div className="w-full bg-gray-900/90 rounded-lg p-3 border border-gray-600 backdrop-blur-sm animate-fade-in-up pointer-events-auto shadow-2xl">
+                    <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center gap-2">
+                            <p className="text-white text-xs font-bold">Fix Request</p>
+                            <button 
+                                onClick={() => setInputPosition(prev => prev === 'bottom' ? 'top' : 'bottom')}
+                                className="text-gray-400 hover:text-white p-1 rounded hover:bg-gray-700"
+                                title={inputPosition === 'bottom' ? "Move to Top" : "Move to Bottom"}
+                            >
+                                {inputPosition === 'bottom' ? (
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 10l7-7m0 0l7 7m-7-7v18" /></svg>
+                                ) : (
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" /></svg>
+                                )}
+                            </button>
+                        </div>
+                        
+                        {/* Drawing Toggle Logic */}
+                        {!isDrawingMode ? (
+                            <button 
+                                onClick={() => {
+                                    setIsDrawingMode(true);
+                                    // Reset canvas when starting to draw
+                                    setTimeout(() => handleClearCanvas(), 10);
+                                }}
+                                className="text-xs px-2 py-0.5 rounded border bg-gray-700 border-gray-600 text-gray-300 hover:text-white hover:border-accent-blue"
+                            >
+                                ✏️ Draw Mask
+                            </button>
+                        ) : (
+                            <div className="flex gap-2">
+                                <button 
+                                    onClick={handleClearCanvas}
+                                    className="text-[10px] text-red-300 hover:text-white underline"
+                                >
+                                    Clear
+                                </button>
+                                <button 
+                                    onClick={() => setIsDrawingMode(false)}
+                                    className="text-[10px] bg-green-600 text-white px-2 py-0.5 rounded font-bold hover:bg-green-500"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    
+                    <textarea 
+                        value={customFixText}
+                        onChange={(e) => setCustomFixText(e.target.value)}
+                        placeholder={isDrawingMode ? "What to do in red area?" : "e.g. Make hair red..."}
+                        className="w-full h-12 bg-gray-800 text-white text-xs p-2 rounded border border-gray-600 mb-2 focus:border-accent-blue focus:outline-none resize-none"
+                        autoFocus={!isDrawingMode}
+                    />
+
+                    <div className="flex gap-2 w-full">
+                        <button 
+                            onClick={() => { setShowCustomFixInput(false); setIsDrawingMode(false); }}
+                            className="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-xs py-1 rounded"
+                        >
+                            Cancel
+                        </button>
+                        <button 
+                            onClick={handleCustomFixSubmit}
+                            className="flex-1 bg-accent-blue hover:bg-blue-400 text-black font-bold text-xs py-1 rounded"
+                        >
+                            Fix
+                        </button>
+                    </div>
                 </div>
             </div>
         )}
     </div>
   );
-
-  const renderCompareButton = () => {
-    if (item.status !== 'SUCCESS') return null;
-    return (
-        <button 
-            onMouseDown={handleCompareStart}
-            onMouseUp={handleCompareEnd}
-            onMouseLeave={handleCompareEnd}
-            onTouchStart={handleCompareStart}
-            onTouchEnd={handleCompareEnd}
-            className={`p-1.5 rounded-full transition-colors pointer-events-auto ${showOriginal ? 'bg-accent-blue text-black' : 'bg-black/50 text-gray-300 hover:text-white hover:bg-black/70'}`}
-            title="Hold to compare with original"
-        >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-            </svg>
-        </button>
-    );
-  };
 
   const renderImproveButton = (inList: boolean = false) => {
     if (item.status !== 'SUCCESS') return null;
@@ -222,23 +381,26 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, o
               {renderImageArea()}
           </div>
           
-          <div className="p-3 bg-gray-800 text-sm flex justify-between items-center border-t border-gray-700 gap-2">
-              <span className="truncate flex-1 text-gray-300" title={item.file.name}>{item.file.name}</span>
-              
-              <div className="flex items-center gap-2">
-                  {renderCustomFixButton(false)}
-                  {renderImproveButton(false)}
-                  {renderRetryButton(false)}
-    
-                  {item.status === 'SUCCESS' && item.resultBase64 ? (
-                      renderDownloadButton(false)
-                  ) : item.status === 'ERROR' ? (
-                      <span className="text-red-400 text-xs">Failed</span>
-                  ) : (
-                      <span className="text-gray-500 text-xs">Wait</span>
-                  )}
-              </div>
-          </div>
+          {/* Hide footer in grid mode if custom fix input is open to give more space */}
+          {!showCustomFixInput && (
+            <div className="p-3 bg-gray-800 text-sm flex justify-between items-center border-t border-gray-700 gap-2">
+                <span className="truncate flex-1 text-gray-300" title={item.file.name}>{item.file.name}</span>
+                
+                <div className="flex items-center gap-2">
+                    {renderCustomFixButton(false)}
+                    {renderImproveButton(false)}
+                    {renderRetryButton(false)}
+        
+                    {item.status === 'SUCCESS' && item.resultBase64 ? (
+                        renderDownloadButton(false)
+                    ) : item.status === 'ERROR' ? (
+                        <span className="text-red-400 text-xs">Failed</span>
+                    ) : (
+                        <span className="text-gray-500 text-xs">Wait</span>
+                    )}
+                </div>
+            </div>
+          )}
         </div>
       );
   }
@@ -292,27 +454,59 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, o
        {isExpanded && (
          <div className="border-t border-gray-700 bg-gray-900/50 p-4 animate-fade-in-up">
              {showCustomFixInput && (
-                 <div className="mb-4 bg-gray-800 p-3 rounded-lg border border-gray-600 flex gap-2">
-                    <input 
-                        type="text" 
-                        value={customFixText}
-                        onChange={(e) => setCustomFixText(e.target.value)}
-                        placeholder="Describe what to fix (e.g. Make the jacket blue)..."
-                        className="flex-1 bg-gray-900 text-white text-sm px-3 py-2 rounded focus:outline-none focus:border-accent-blue border border-gray-700"
-                        autoFocus
-                    />
-                    <button onClick={() => setShowCustomFixInput(false)} className="px-3 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
-                    <button onClick={handleCustomFixSubmit} className="px-4 py-2 bg-accent-blue text-black font-bold rounded text-sm hover:bg-blue-400">Apply Fix</button>
+                 <div className="mb-4 bg-gray-800 p-3 rounded-lg border border-gray-600">
+                    <div className="flex justify-between items-center mb-2">
+                        <h4 className="text-white text-xs font-bold uppercase">Fix Request</h4>
+                        
+                        {/* Improved Drawing Controls for List View */}
+                        {!isDrawingMode ? (
+                             <button 
+                                onClick={() => {
+                                    setIsDrawingMode(true);
+                                    setTimeout(() => handleClearCanvas(), 10);
+                                }}
+                                className="text-xs px-2 py-0.5 rounded border bg-gray-700 border-gray-600 text-gray-300 hover:text-white hover:border-accent-blue"
+                            >
+                                ✏️ Draw Mask
+                            </button>
+                        ) : (
+                             <div className="flex gap-2">
+                                <button 
+                                    onClick={handleClearCanvas}
+                                    className="text-[10px] text-red-300 hover:text-white underline"
+                                >
+                                    Clear
+                                </button>
+                                <button 
+                                    onClick={() => setIsDrawingMode(false)}
+                                    className="text-[10px] bg-green-600 text-white px-2 py-0.5 rounded font-bold hover:bg-green-500"
+                                >
+                                    Done
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex gap-2 mb-2">
+                        <input 
+                            type="text" 
+                            value={customFixText}
+                            onChange={(e) => setCustomFixText(e.target.value)}
+                            placeholder={isDrawingMode ? "What to do in red area?" : "Describe what to fix..."}
+                            className="flex-1 bg-gray-900 text-white text-sm px-3 py-2 rounded focus:outline-none focus:border-accent-blue border border-gray-700"
+                            autoFocus={!isDrawingMode}
+                        />
+                        <button onClick={() => setShowCustomFixInput(false)} className="px-3 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
+                        <button onClick={handleCustomFixSubmit} className="px-4 py-2 bg-accent-blue text-black font-bold rounded text-sm hover:bg-blue-400">Apply Fix</button>
+                    </div>
+                    {isDrawingMode && (
+                        <p className="text-[10px] text-gray-400">Draw on the image below to highlight areas. <span onClick={handleClearCanvas} className="text-red-400 cursor-pointer hover:underline ml-2">Clear Drawing</span></p>
+                    )}
                  </div>
              )}
 
              <div className="relative aspect-[2/3] max-w-sm mx-auto rounded-lg overflow-hidden shadow-2xl border border-gray-700">
                 {renderImageArea()}
-                
-                {/* In List view, we overlay the Compare button inside the expanded image area for better UX */}
-                <div className="absolute bottom-4 right-4">
-                    {renderCompareButton()}
-                </div>
              </div>
          </div>
        )}

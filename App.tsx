@@ -33,6 +33,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<ProcessingError | null>(null);
   const [showSingleCustomFix, setShowSingleCustomFix] = useState<boolean>(false);
   const [singleCustomFixText, setSingleCustomFixText] = useState<string>('');
+  const [isSingleDrawingMode, setIsSingleDrawingMode] = useState<boolean>(false);
 
   // Batch Mode State
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
@@ -42,6 +43,11 @@ const App: React.FC = () => {
   
   // Track object URLs for cleanup to avoid dependency cycles in useEffect
   const objectUrlsRef = useRef<string[]>([]);
+  
+  // Refs for Single Mode Drawing
+  const singleCanvasRef = useRef<HTMLCanvasElement>(null);
+  const singleImageRef = useRef<HTMLImageElement>(null);
+  const isSingleDrawingRef = useRef(false);
 
   const isBatchMode = batchItems.length > 0;
 
@@ -56,6 +62,25 @@ const App: React.FC = () => {
       objectUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
     };
   }, []);
+
+  // Effect to sync canvas size for single mode drawing
+  useEffect(() => {
+    if (showSingleCustomFix && isSingleDrawingMode && singleCanvasRef.current && singleImageRef.current) {
+        const canvas = singleCanvasRef.current;
+        const img = singleImageRef.current;
+        canvas.width = img.clientWidth;
+        canvas.height = img.clientHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 4;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+  }, [showSingleCustomFix, isSingleDrawingMode]);
+
 
   const handleFilesSelect = (selectedFiles: File[]) => {
     // Cleanup old URLs
@@ -103,8 +128,8 @@ const App: React.FC = () => {
       let mimeType = file.type;
 
       if (isRefinement && existingResultBase64) {
-        // Remove data prefix to get raw base64
-        inputBase64 = existingResultBase64.split(',')[1];
+        // Remove data prefix to get raw base64 if needed, usually passed pure by fileHelper but might be data url from canvas
+        inputBase64 = existingResultBase64.includes(',') ? existingResultBase64.split(',')[1] : existingResultBase64;
         mimeType = 'image/png'; // Results are always PNG from this app
       } else {
         inputBase64 = await fileToBase64(file);
@@ -137,6 +162,7 @@ const App: React.FC = () => {
     setStatus(AppStatus.PROCESSING);
     setError(null);
     setShowSingleCustomFix(false);
+    setIsSingleDrawingMode(false);
 
     try {
       const base64 = await fileToBase64(file);
@@ -180,12 +206,31 @@ const App: React.FC = () => {
     setStatus(AppStatus.PROCESSING);
     setError(null);
     setShowSingleCustomFix(false);
+    
+    let inputBase64 = resultBase64.split(',')[1];
+    let finalPrompt = singleCustomFixText;
 
     try {
-        const inputBase64 = resultBase64.split(',')[1];
-        const generatedImage = await colorizeMangaPage(inputBase64, 'image/png', selectedStyle, mangaTitle, customPrompt, true, singleCustomFixText);
+        // If drawing mode was on, merge drawing
+        if (isSingleDrawingMode && singleCanvasRef.current && singleImageRef.current) {
+            const tempCanvas = document.createElement('canvas');
+            const img = singleImageRef.current;
+            tempCanvas.width = img.naturalWidth;
+            tempCanvas.height = img.naturalHeight;
+            const ctx = tempCanvas.getContext('2d');
+            if (ctx) {
+                ctx.drawImage(img, 0, 0);
+                // Draw overlay scaled
+                ctx.drawImage(singleCanvasRef.current, 0, 0, tempCanvas.width, tempCanvas.height);
+                inputBase64 = tempCanvas.toDataURL('image/png').split(',')[1];
+                finalPrompt = `[RED_MASK] ${singleCustomFixText}`;
+            }
+        }
+
+        const generatedImage = await colorizeMangaPage(inputBase64, 'image/png', selectedStyle, mangaTitle, customPrompt, true, finalPrompt);
         setResultBase64(`data:image/png;base64,${generatedImage}`);
         setSingleCustomFixText('');
+        setIsSingleDrawingMode(false);
         setStatus(AppStatus.SUCCESS);
     } catch (err: any) {
         console.error(err);
@@ -202,7 +247,35 @@ const App: React.FC = () => {
     setStatus(AppStatus.IDLE);
     setError(null);
     setShowSingleCustomFix(false);
+    setIsSingleDrawingMode(false);
   };
+
+  // --- Single Mode Drawing Handlers ---
+  const onSingleMouseDown = (e: React.MouseEvent) => {
+    if(!isSingleDrawingMode || !singleCanvasRef.current) return;
+    isSingleDrawingRef.current = true;
+    const ctx = singleCanvasRef.current.getContext('2d');
+    if(ctx) {
+        ctx.beginPath();
+        ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+    }
+  };
+  const onSingleMouseMove = (e: React.MouseEvent) => {
+    if(!isSingleDrawingMode || !isSingleDrawingRef.current || !singleCanvasRef.current) return;
+    const ctx = singleCanvasRef.current.getContext('2d');
+    if(ctx) {
+        ctx.lineTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY);
+        ctx.stroke();
+    }
+  };
+  const onSingleMouseUp = () => isSingleDrawingRef.current = false;
+  const clearSingleCanvas = () => {
+      if(singleCanvasRef.current) {
+          const ctx = singleCanvasRef.current.getContext('2d');
+          ctx?.clearRect(0,0, singleCanvasRef.current.width, singleCanvasRef.current.height);
+      }
+  };
+
 
   // --- Batch Processing ---
   const startBatchProcessing = async () => {
@@ -249,10 +322,12 @@ const App: React.FC = () => {
     }
   }
 
-  const handleCustomFixItem = (id: string, prompt: string) => {
+  const handleCustomFixItem = (id: string, prompt: string, modifiedImageBase64?: string) => {
       const item = batchItems.find(i => i.id === id);
       if (item && item.resultBase64) {
-          colorizeItem(id, item.file, true, item.resultBase64, prompt); // Custom Fix (Result Input + Prompt)
+          // Use modified image (with drawing) if provided, else use original result
+          const inputImage = modifiedImageBase64 || item.resultBase64;
+          colorizeItem(id, item.file, true, inputImage, prompt); 
       }
   }
 
@@ -303,6 +378,7 @@ const App: React.FC = () => {
     setIsConfigExpanded(true);
     setShowSingleCustomFix(false);
     setSingleCustomFixText('');
+    setIsSingleDrawingMode(false);
   };
 
   // --- RENDER HELPERS ---
@@ -514,16 +590,68 @@ const App: React.FC = () => {
                      </div>
                    </div>
 
-                   {/* Single Mode Custom Fix Input */}
+                   {/* Single Mode Custom Fix Input & Drawing Canvas */}
                    {showSingleCustomFix && (
-                        <div className="max-w-xl mx-auto bg-gray-800 p-4 rounded-xl border border-accent-blue/30 animate-fade-in-up">
-                            <label className="block text-left text-sm text-gray-400 mb-2 font-bold uppercase">Describe changes to apply:</label>
+                        <div className="max-w-2xl mx-auto bg-gray-800 p-4 rounded-xl border border-accent-blue/30 animate-fade-in-up">
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="block text-left text-sm text-gray-400 font-bold uppercase">Describe changes & Mark Area:</label>
+                                
+                                {/* Improved Drawing Toggle UI */}
+                                {!isSingleDrawingMode ? (
+                                    <button 
+                                        onClick={() => {
+                                            setIsSingleDrawingMode(true);
+                                            setTimeout(clearSingleCanvas, 10);
+                                        }}
+                                        className="text-xs px-3 py-1.5 rounded-lg border bg-gray-700 border-gray-600 text-gray-200 hover:bg-gray-600 hover:text-white hover:border-accent-blue transition-colors flex items-center gap-1"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                            <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                                        </svg>
+                                        ✏️ Draw Mask
+                                    </button>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <button 
+                                            onClick={clearSingleCanvas}
+                                            className="text-xs px-2 py-1.5 rounded bg-gray-700 hover:bg-red-900/50 text-red-300 hover:text-red-200 border border-transparent hover:border-red-500/30 transition-colors"
+                                        >
+                                            🗑️ Clear
+                                        </button>
+                                        <button 
+                                            onClick={() => setIsSingleDrawingMode(false)}
+                                            className="text-xs px-3 py-1.5 rounded bg-green-600 hover:bg-green-500 text-white font-bold transition-colors flex items-center gap-1 shadow-sm"
+                                        >
+                                            ✅ Done
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* Drawing Canvas Area (Only visible when fixing) */}
+                            {isSingleDrawingMode && (
+                                <div className="relative aspect-auto max-h-[50vh] mb-4 border-2 border-accent-blue/50 rounded overflow-hidden cursor-crosshair bg-black/20">
+                                    <img ref={singleImageRef} src={resultBase64} alt="To Fix" className="max-h-[50vh] w-auto mx-auto pointer-events-none" />
+                                    <canvas 
+                                        ref={singleCanvasRef}
+                                        className="absolute inset-0 w-full h-full"
+                                        onMouseDown={onSingleMouseDown}
+                                        onMouseMove={onSingleMouseMove}
+                                        onMouseUp={onSingleMouseUp}
+                                        onMouseLeave={onSingleMouseUp}
+                                    />
+                                    <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
+                                        Drawing Red Mask...
+                                    </div>
+                                </div>
+                            )}
+
                             <div className="flex gap-2">
                                 <input 
                                     type="text" 
                                     value={singleCustomFixText}
                                     onChange={(e) => setSingleCustomFixText(e.target.value)}
-                                    placeholder="e.g. Make the character's hair blue instead of blonde..."
+                                    placeholder={isSingleDrawingMode ? "What to do in the red area?" : "e.g. Make the character's hair blue..."}
                                     className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-accent-blue"
                                     autoFocus
                                     onKeyDown={(e) => e.key === 'Enter' && handleCustomFixSingle()}
@@ -539,7 +667,9 @@ const App: React.FC = () => {
                         </div>
                    )}
 
-                   <ImageComparator originalSrc={previewUrl} colorizedSrc={resultBase64} />
+                   {!showSingleCustomFix && (
+                       <ImageComparator originalSrc={previewUrl} colorizedSrc={resultBase64} />
+                   )}
                 </div>
               )}
             </div>
