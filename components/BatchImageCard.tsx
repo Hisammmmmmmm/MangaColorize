@@ -4,12 +4,16 @@ import { BatchItem } from '../types';
 interface BatchImageCardProps {
   item: BatchItem;
   onRetry: (id: string) => void;
+  onImprove: (id: string) => void;
+  onCustomFix: (id: string, prompt: string) => void;
   viewMode: 'grid' | 'list';
 }
 
-export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, viewMode }) => {
+export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, onImprove, onCustomFix, viewMode }) => {
   const [showOriginal, setShowOriginal] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showCustomFixInput, setShowCustomFixInput] = useState(false);
+  const [customFixText, setCustomFixText] = useState('');
 
   const handleCompareStart = (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -21,6 +25,14 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
     e.preventDefault();
     e.stopPropagation();
     setShowOriginal(false);
+  };
+
+  const handleCustomFixSubmit = () => {
+    if (customFixText.trim()) {
+        onCustomFix(item.id, customFixText);
+        setShowCustomFixInput(false);
+        setCustomFixText('');
+    }
   };
 
   const displaySrc = (item.status === 'SUCCESS' && item.resultBase64 && !showOriginal) 
@@ -45,7 +57,7 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
                     </svg>
                 </div>
             )}
-            {item.status === 'SUCCESS' && (
+            {item.status === 'SUCCESS' && !showCustomFixInput && (
                 <div className={`absolute top-2 right-2 bg-green-500 text-white p-1 rounded-full shadow-lg transition-opacity ${showOriginal ? 'opacity-0' : 'opacity-100'}`}>
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -65,6 +77,34 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
                 </div>
             )}
         </div>
+
+        {/* Custom Fix Input Overlay (Grid Mode) */}
+        {showCustomFixInput && viewMode === 'grid' && (
+            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-4 z-20 animate-fade-in-up">
+                <p className="text-white text-sm font-bold mb-2">What to fix?</p>
+                <textarea 
+                    value={customFixText}
+                    onChange={(e) => setCustomFixText(e.target.value)}
+                    placeholder="e.g. Make hair red..."
+                    className="w-full h-20 bg-gray-800 text-white text-xs p-2 rounded border border-gray-600 mb-2 focus:border-accent-blue focus:outline-none resize-none"
+                    autoFocus
+                />
+                <div className="flex gap-2 w-full">
+                    <button 
+                        onClick={() => setShowCustomFixInput(false)}
+                        className="flex-1 bg-gray-700 hover:bg-gray-600 text-white text-xs py-1 rounded"
+                    >
+                        Cancel
+                    </button>
+                    <button 
+                        onClick={handleCustomFixSubmit}
+                        className="flex-1 bg-accent-blue hover:bg-blue-400 text-black font-bold text-xs py-1 rounded"
+                    >
+                        Fix
+                    </button>
+                </div>
+            </div>
+        )}
     </div>
   );
 
@@ -88,6 +128,51 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
     );
   };
 
+  const renderImproveButton = (inList: boolean = false) => {
+    if (item.status !== 'SUCCESS') return null;
+    const baseClass = "p-1.5 rounded-full transition-colors flex items-center gap-1";
+    const variantClass = inList
+        ? "text-yellow-400 hover:text-black hover:bg-yellow-400 bg-gray-800 border border-yellow-600/30"
+        : "text-yellow-400 hover:text-white hover:bg-yellow-600/50";
+    
+    return (
+        <button
+            onClick={() => onImprove(item.id)}
+            className={`${baseClass} ${variantClass}`}
+            title="Auto Improve (Fix B&W parts)"
+        >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 9a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zm7-4a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0V6h-1a1 1 0 110-2h1V3a1 1 0 011-1zm-1 9a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z" clipRule="evenodd" />
+            </svg>
+            {inList && <span className="text-xs font-bold">Auto Fix</span>}
+        </button>
+    );
+  };
+
+  const renderCustomFixButton = (inList: boolean = false) => {
+    if (item.status !== 'SUCCESS') return null;
+    const baseClass = "p-1.5 rounded-full transition-colors flex items-center gap-1";
+    const variantClass = inList
+        ? "text-accent-blue hover:text-black hover:bg-accent-blue bg-gray-800 border border-accent-blue/30"
+        : "text-accent-blue hover:text-white hover:bg-blue-600/50";
+    
+    return (
+        <button
+            onClick={() => {
+                setShowCustomFixInput(!showCustomFixInput);
+                if (inList && !isExpanded) setIsExpanded(true);
+            }}
+            className={`${baseClass} ${variantClass}`}
+            title="Custom Fix (Prompt changes)"
+        >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+            </svg>
+            {inList && <span className="text-xs font-bold">Custom Fix</span>}
+        </button>
+    );
+  };
+
   const renderRetryButton = (inList: boolean = false) => {
     if (item.status !== 'SUCCESS' && item.status !== 'ERROR') return null;
     const baseClass = "p-1.5 rounded-full transition-colors flex items-center gap-1";
@@ -99,7 +184,7 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
         <button 
             onClick={() => onRetry(item.id)} 
             className={`${baseClass} ${variantClass}`}
-            title="Retry this image"
+            title="Retry this image (From Original)"
         >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -141,28 +226,8 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
               <span className="truncate flex-1 text-gray-300" title={item.file.name}>{item.file.name}</span>
               
               <div className="flex items-center gap-2">
-                  {/* Compare button acts as overlay in grid mode within renderImageArea if we wanted, but previously it was in footer. 
-                      Wait, the previous implementation had the Compare button IN THE FOOTER. 
-                      My new renderImageArea doesn't have the compare button. 
-                      I need to put the compare button back in the footer for Grid mode as per previous design. */}
-                  
-                  {item.status === 'SUCCESS' && (
-                    <button 
-                        onMouseDown={handleCompareStart}
-                        onMouseUp={handleCompareEnd}
-                        onMouseLeave={handleCompareEnd}
-                        onTouchStart={handleCompareStart}
-                        onTouchEnd={handleCompareEnd}
-                        className={`p-1.5 rounded-full transition-colors ${showOriginal ? 'bg-accent-blue text-black' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-                        title="Hold to compare with original"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                        </svg>
-                    </button>
-                  )}
-    
+                  {renderCustomFixButton(false)}
+                  {renderImproveButton(false)}
                   {renderRetryButton(false)}
     
                   {item.status === 'SUCCESS' && item.resultBase64 ? (
@@ -205,6 +270,8 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
           {/* Actions */}
           <div className="flex items-center gap-2">
              {item.status === 'ERROR' && <span className="text-red-400 text-xs mr-2 hidden sm:inline">{item.error}</span>}
+             {renderCustomFixButton(true)}
+             {renderImproveButton(true)}
              {renderRetryButton(true)}
              {renderDownloadButton(true)}
              
@@ -224,6 +291,21 @@ export const BatchImageCard: React.FC<BatchImageCardProps> = ({ item, onRetry, v
        {/* Expanded Image Area */}
        {isExpanded && (
          <div className="border-t border-gray-700 bg-gray-900/50 p-4 animate-fade-in-up">
+             {showCustomFixInput && (
+                 <div className="mb-4 bg-gray-800 p-3 rounded-lg border border-gray-600 flex gap-2">
+                    <input 
+                        type="text" 
+                        value={customFixText}
+                        onChange={(e) => setCustomFixText(e.target.value)}
+                        placeholder="Describe what to fix (e.g. Make the jacket blue)..."
+                        className="flex-1 bg-gray-900 text-white text-sm px-3 py-2 rounded focus:outline-none focus:border-accent-blue border border-gray-700"
+                        autoFocus
+                    />
+                    <button onClick={() => setShowCustomFixInput(false)} className="px-3 py-2 text-sm text-gray-400 hover:text-white">Cancel</button>
+                    <button onClick={handleCustomFixSubmit} className="px-4 py-2 bg-accent-blue text-black font-bold rounded text-sm hover:bg-blue-400">Apply Fix</button>
+                 </div>
+             )}
+
              <div className="relative aspect-[2/3] max-w-sm mx-auto rounded-lg overflow-hidden shadow-2xl border border-gray-700">
                 {renderImageArea()}
                 

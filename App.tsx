@@ -31,6 +31,8 @@ const App: React.FC = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [resultBase64, setResultBase64] = useState<string | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
+  const [showSingleCustomFix, setShowSingleCustomFix] = useState<boolean>(false);
+  const [singleCustomFixText, setSingleCustomFixText] = useState<string>('');
 
   // Batch Mode State
   const [batchItems, setBatchItems] = useState<BatchItem[]>([]);
@@ -90,16 +92,26 @@ const App: React.FC = () => {
   };
 
   // --- Core Processing Logic ---
-  const colorizeItem = async (id: string, file: File) => {
+  const colorizeItem = async (id: string, file: File, isRefinement: boolean = false, existingResultBase64?: string, refinementInstruction?: string) => {
     // Update specific item status to PROCESSING
     setBatchItems(prev => prev.map(item => 
       item.id === id ? { ...item, status: 'PROCESSING', error: undefined } : item
     ));
 
     try {
-      const base64 = await fileToBase64(file);
+      let inputBase64 = "";
+      let mimeType = file.type;
+
+      if (isRefinement && existingResultBase64) {
+        // Remove data prefix to get raw base64
+        inputBase64 = existingResultBase64.split(',')[1];
+        mimeType = 'image/png'; // Results are always PNG from this app
+      } else {
+        inputBase64 = await fileToBase64(file);
+      }
+      
       // Note: selectedStyle, mangaTitle, and customPrompt are captured from the current closure.
-      const generatedImage = await colorizeMangaPage(base64, file.type, selectedStyle, mangaTitle, customPrompt);
+      const generatedImage = await colorizeMangaPage(inputBase64, mimeType, selectedStyle, mangaTitle, customPrompt, isRefinement, refinementInstruction);
       
       setBatchItems(prev => prev.map(item => 
         item.id === id ? { 
@@ -124,6 +136,7 @@ const App: React.FC = () => {
     if (!file) return;
     setStatus(AppStatus.PROCESSING);
     setError(null);
+    setShowSingleCustomFix(false);
 
     try {
       const base64 = await fileToBase64(file);
@@ -140,10 +153,55 @@ const App: React.FC = () => {
     }
   };
 
+  const handleImproveSingle = async () => {
+    if (!resultBase64) return;
+    setStatus(AppStatus.PROCESSING);
+    setError(null);
+
+    try {
+      // Use resultBase64 as input
+      const inputBase64 = resultBase64.split(',')[1];
+      // Pass isRefinement = true, no specific instruction = Auto fix
+      const generatedImage = await colorizeMangaPage(inputBase64, 'image/png', selectedStyle, mangaTitle, customPrompt, true);
+      setResultBase64(`data:image/png;base64,${generatedImage}`);
+      setStatus(AppStatus.SUCCESS);
+    } catch (err: any) {
+      console.error(err);
+      setError({
+        message: "Failed to improve image",
+        details: err.message || "Unknown error occurred with Gemini API"
+      });
+      setStatus(AppStatus.ERROR);
+    }
+  };
+
+  const handleCustomFixSingle = async () => {
+    if (!resultBase64 || !singleCustomFixText) return;
+    setStatus(AppStatus.PROCESSING);
+    setError(null);
+    setShowSingleCustomFix(false);
+
+    try {
+        const inputBase64 = resultBase64.split(',')[1];
+        const generatedImage = await colorizeMangaPage(inputBase64, 'image/png', selectedStyle, mangaTitle, customPrompt, true, singleCustomFixText);
+        setResultBase64(`data:image/png;base64,${generatedImage}`);
+        setSingleCustomFixText('');
+        setStatus(AppStatus.SUCCESS);
+    } catch (err: any) {
+        console.error(err);
+        setError({
+            message: "Failed to fix image",
+            details: err.message || "Unknown error occurred with Gemini API"
+        });
+        setStatus(AppStatus.ERROR);
+    }
+  };
+
   const handleRetrySingle = () => {
     setResultBase64(null);
     setStatus(AppStatus.IDLE);
     setError(null);
+    setShowSingleCustomFix(false);
   };
 
   // --- Batch Processing ---
@@ -180,9 +238,23 @@ const App: React.FC = () => {
   const handleRetryItem = (id: string) => {
     const item = batchItems.find(i => i.id === id);
     if (item) {
-      colorizeItem(id, item.file);
+      colorizeItem(id, item.file); // Standard Retry (Original Input)
     }
   };
+
+  const handleImproveItem = (id: string) => {
+    const item = batchItems.find(i => i.id === id);
+    if (item && item.resultBase64) {
+      colorizeItem(id, item.file, true, item.resultBase64); // Improve (Result Input, Auto)
+    }
+  }
+
+  const handleCustomFixItem = (id: string, prompt: string) => {
+      const item = batchItems.find(i => i.id === id);
+      if (item && item.resultBase64) {
+          colorizeItem(id, item.file, true, item.resultBase64, prompt); // Custom Fix (Result Input + Prompt)
+      }
+  }
 
   const handleDownloadAll = async () => {
     const successfulItems = batchItems.filter(i => i.status === 'SUCCESS' && i.resultBase64);
@@ -229,6 +301,8 @@ const App: React.FC = () => {
     setCustomPrompt('');
     setIsZipping(false);
     setIsConfigExpanded(true);
+    setShowSingleCustomFix(false);
+    setSingleCustomFixText('');
   };
 
   // --- RENDER HELPERS ---
@@ -411,14 +485,60 @@ const App: React.FC = () => {
                    <div className="flex flex-col md:flex-row justify-between items-center px-4 gap-4">
                      <h2 className="text-3xl font-bold text-white">Result</h2>
                      <div className="flex flex-wrap justify-center gap-3">
+                        <Button 
+                            variant="secondary" 
+                            onClick={() => setShowSingleCustomFix(!showSingleCustomFix)} 
+                            className="text-sm px-4 py-2 bg-gray-800 border border-accent-blue/50 text-accent-blue hover:text-white hover:bg-accent-blue/50"
+                        >
+                             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                            </svg>
+                            Custom Fix
+                        </Button>
+                        <Button 
+                            variant="primary" 
+                            onClick={handleImproveSingle} 
+                            className="text-sm px-4 py-2 bg-gradient-to-r from-yellow-500 to-orange-500 border-none hover:shadow-[0_0_15px_rgba(255,165,0,0.5)]"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 9a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 11-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zm7-4a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0V6h-1a1 1 0 110-2h1V3a1 1 0 011-1zm-1 9a1 1 0 011 1v1h1a1 1 0 110 2h-1v1a1 1 0 11-2 0v-1h-1a1 1 0 110-2h1v-1a1 1 0 011-1z" clipRule="evenodd" />
+                            </svg>
+                            Auto Improve
+                        </Button>
                        <Button variant="secondary" onClick={handleRetrySingle} className="text-sm px-4 py-2">
-                          Adjust & Retry
+                          Retry Original
                        </Button>
                        <Button variant="outline" onClick={reset} className="text-sm px-4 py-2">
                           New Image
                        </Button>
                      </div>
                    </div>
+
+                   {/* Single Mode Custom Fix Input */}
+                   {showSingleCustomFix && (
+                        <div className="max-w-xl mx-auto bg-gray-800 p-4 rounded-xl border border-accent-blue/30 animate-fade-in-up">
+                            <label className="block text-left text-sm text-gray-400 mb-2 font-bold uppercase">Describe changes to apply:</label>
+                            <div className="flex gap-2">
+                                <input 
+                                    type="text" 
+                                    value={singleCustomFixText}
+                                    onChange={(e) => setSingleCustomFixText(e.target.value)}
+                                    placeholder="e.g. Make the character's hair blue instead of blonde..."
+                                    className="flex-1 bg-gray-900 text-white px-4 py-2 rounded-lg border border-gray-700 focus:outline-none focus:border-accent-blue"
+                                    autoFocus
+                                    onKeyDown={(e) => e.key === 'Enter' && handleCustomFixSingle()}
+                                />
+                                <Button 
+                                    onClick={handleCustomFixSingle} 
+                                    disabled={!singleCustomFixText.trim()}
+                                    className="px-6 py-2 bg-accent-blue text-black hover:bg-blue-400 border-none"
+                                >
+                                    Apply
+                                </Button>
+                            </div>
+                        </div>
+                   )}
+
                    <ImageComparator originalSrc={previewUrl} colorizedSrc={resultBase64} />
                 </div>
               )}
@@ -508,7 +628,14 @@ const App: React.FC = () => {
               {/* Batch Items Container */}
               <div className={viewMode === 'grid' ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" : "flex flex-col gap-4"}>
                 {batchItems.map((item) => (
-                  <BatchImageCard key={item.id} item={item} onRetry={handleRetryItem} viewMode={viewMode} />
+                  <BatchImageCard 
+                    key={item.id} 
+                    item={item} 
+                    onRetry={handleRetryItem} 
+                    onImprove={handleImproveItem}
+                    onCustomFix={handleCustomFixItem}
+                    viewMode={viewMode} 
+                  />
                 ))}
               </div>
             </div>

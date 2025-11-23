@@ -24,7 +24,7 @@ export const Dropzone: React.FC<DropzoneProps> = ({ onFilesSelect, disabled }) =
     if (disabled) return;
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const filesArray = Array.from(e.dataTransfer.files).filter(file => 
+      const filesArray = Array.from<File>(e.dataTransfer.files).filter(file => 
         file.type.startsWith('image/')
       );
       if (filesArray.length > 0) {
@@ -41,7 +41,7 @@ export const Dropzone: React.FC<DropzoneProps> = ({ onFilesSelect, disabled }) =
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const filesArray = Array.from(e.target.files).filter(file => 
+      const filesArray = Array.from<File>(e.target.files).filter(file => 
         file.type.startsWith('image/')
       );
       onFilesSelect(filesArray);
