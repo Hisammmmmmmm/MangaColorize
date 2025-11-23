@@ -19,7 +19,7 @@ Test the app with this link : https://ai.studio/apps/drive/1661XBdxu-vT6HHlRdBrf
 3. Run the app:
    `npm run dev`
 
-# Run and deploy your AI Studio app
+# Screen
 <div align="center">
 <img width="1200" height="675" alt="GHBanner" src="\screen2.PNG" />
 </div>
