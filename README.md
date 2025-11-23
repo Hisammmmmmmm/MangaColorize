@@ -1,5 +1,5 @@
 <div align="center">
-<img width="800" height="575" alt="GHBanner" src="\screen1.PNG" />
+<img width="800" height="575" alt="GHBanner" src="\screen0.png" />
 </div>
 
 # MangaColorize AI 🎨✨
@@ -88,5 +88,6 @@ Interactive UI & UX
 
 ## Screen
 <div align="center">
+<img width="1200" height="675" alt="GHBanner" src="\screen1.PNG" />
 <img width="1200" height="675" alt="GHBanner" src="\screen2.PNG" />
 </div>
