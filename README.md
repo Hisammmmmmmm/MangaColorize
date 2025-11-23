@@ -4,7 +4,7 @@
 
 **MangaColorize AI** is a sophisticated web application powered by **Google Gemini 2.5 Flash** that instantly transforms black-and-white manga pages into high-quality, fully colored anime-style illustrations while intelligently preserving text bubbles and dialogue clarity.
 
-🔗 **[TRY IT LIVE ON GOOGLE AI STUDIO](INSERT_YOUR_LINK_HERE)**
+🔗 **[TRY IT LIVE ON GOOGLE AI STUDIO]([INSERT_YOUR_LINK_HERE](https://aistudio.google.com/apps/drive/1661XBdxu-vT6HHlRdBrfxrc9P87qLfz_?fullscreenApplet=true&showPreview=true&showAssistant=true))**
 
 ---
 
