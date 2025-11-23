@@ -10,7 +10,7 @@ A sophisticated web application powered by Google Gemini 2.5 Flash that instantl
 
 This contains everything you need to run your app locally.
 
-Test the app with this link : https://ai.studio/apps/drive/1661XBdxu-vT6HHlRdBrfxrc9P87qLfz_?fullscreenApplet=true
+Test the app online with this link : https://ai.studio/apps/drive/1661XBdxu-vT6HHlRdBrfxrc9P87qLfz_?fullscreenApplet=true
 <br>(you need to be connected to your google account)
 
 ## 🚀 Key Features
